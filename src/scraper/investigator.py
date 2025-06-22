@@ -93,6 +93,7 @@ class Investigator:
             return
 
         try:
+            print("PLEASE HOST")
             res = await self.client.get(f"http://{host.ip}:{host.port}/api/tags")
             res = await res.json()  # pyright:ignore[reportAny]
             models: list[OllamaModel] = []

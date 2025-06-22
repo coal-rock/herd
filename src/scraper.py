@@ -1,41 +1,18 @@
 from scraper.investigator import Investigator
-from scraper.scanner import Scanner
+from scraper.scanner import Host, Scanner
 import asyncio
-
-
-async def scan(investigator: Investigator):
-    scanner = Scanner("0.0.0.0/0", port=11434, max_rate=1000)
-
-    print("starting scanner")
-
-    async for host in scanner.scan():
-        print("found host")
-        await investigator.add_host(host)
-
-    print("done scanning")
-
-
-async def investigate(investigator: Investigator):
-    investigator.start()
-
-    print("starting investigator")
-
-    async for host in investigator.iter():
-        print(host)
-
-    print("done investigating")
+import multiprocessing
 
 
 async def main():
+    scanner = Scanner("0.0.0.0/0", port=22, max_rate=1000)
     investigator = Investigator()
+    investigator.start()
 
-    scanner_task = asyncio.create_task(scan(investigator))
-    investigator_task = asyncio.create_task(investigate(investigator))
+    async for host in scanner.scan():
+        await investigator.add_host(Host("127.0.0.1", 22, 69))
 
-    _ = await asyncio.gather(
-        investigator_task,
-        scanner_task,
-    )
+    await asyncio.sleep(10000000)
 
 
 asyncio.run(main())

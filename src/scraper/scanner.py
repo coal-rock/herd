@@ -52,55 +52,52 @@ class Scanner:
             raise MasscanNotFound from e
 
         while True:
-            try:
-                if process.stdout is not None:
-                    if process.stdout.at_eof():
-                        break
+            if process.stdout is not None:
+                if process.stdout.at_eof():
+                    break
+
+                try:
+                    line = await process.stdout.readuntil(separator=(b"\r", b"\n"))
+                except asyncio.IncompleteReadError as e:
+                    line = e.partial
+
+                line = line.decode()
+                print(line)
+                if "permission denied" in line:
+                    raise LackingRequiredPermissions
+
+                if "FAIL:" in line:
+                    raise MasscanGeneric(line.split("FAIL: ")[1])
+
+                if line.strip().startswith("open"):
+                    line_parts = line.strip().split(" ")
+
+                    port = int(line_parts[2])
+                    ip = line_parts[3]
 
                     try:
-                        line = await process.stdout.readuntil(separator=(b"\r", b"\n"))
-                    except asyncio.IncompleteReadError as e:
-                        line = e.partial
+                        timestamp = int(line_parts[4])
+                    except ValueError:
+                        first = line_parts[4].split("rate")[0]
 
-                    line = line.decode()
+                        new_line = await process.stdout.readuntil(
+                            separator=(b"\r", b"\n")
+                        )
 
-                    if "FAIL: permission denied" in line:
-                        raise LackingRequiredPermissions
+                        while "rate" in new_line.decode():
+                            try:
+                                new_line = await process.stdout.readuntil(
+                                    separator=(b"\r", b"\n")
+                                )
+                            except asyncio.IncompleteReadError as e:
+                                new_line = e.partial
 
-                    if "FAIL:" in line:
-                        raise MasscanGeneric(line.split("FAIL: ")[1])
+                        timestamp = int(first + new_line.decode())
 
-                    if line.strip().startswith("open"):
-                        line_parts = line.strip().split(" ")
+                    yield Host(ip, port, timestamp)
 
-                        port = int(line_parts[2])
-                        ip = line_parts[3]
-
-                        try:
-                            timestamp = int(line_parts[4])
-                        except ValueError:
-                            first = line_parts[4].split("rate")[0]
-
-                            new_line = await process.stdout.readuntil(
-                                separator=(b"\r", b"\n")
-                            )
-
-                            while "rate" in new_line.decode():
-                                try:
-                                    new_line = await process.stdout.readuntil(
-                                        separator=(b"\r", b"\n")
-                                    )
-                                except asyncio.IncompleteReadError as e:
-                                    new_line = e.partial
-
-                            timestamp = int(first + new_line.decode())
-
-                        yield Host(ip, port, timestamp)
-
-                else:
-                    break
-            except Exception:
-                continue
+            else:
+                break
 
 
 class MasscanNotFound(Exception):

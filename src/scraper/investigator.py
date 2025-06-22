@@ -79,11 +79,8 @@ class Investigator:
             await self.client.close()
 
     async def iter(self) -> AsyncIterator[OllamaHost]:
-        while True:
-            if not self.output_queue.empty():
-                yield await self.output_queue.get()
-            else:
-                await asyncio.sleep(1)
+        while not self.output_queue.empty():
+            yield await self.output_queue.get()
 
     async def add_host(self, host: Host):
         await self.input_queue.put(host)
@@ -93,7 +90,6 @@ class Investigator:
             return
 
         try:
-            print("PLEASE HOST")
             res = await self.client.get(f"http://{host.ip}:{host.port}/api/tags")
             res = await res.json()  # pyright:ignore[reportAny]
             models: list[OllamaModel] = []
@@ -121,7 +117,8 @@ class Investigator:
             )
 
         except Exception as e:
-            print(f"INVESTIGATION ERROR: {host} | {e}")
+            pass
+            # print(f"INVESTIGATION ERROR: {host} | {e}")
 
     async def worker(self):
         if self.task_group is None:

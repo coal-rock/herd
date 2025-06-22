@@ -46,7 +46,7 @@ class Scanner:
                 "-oL",
                 "-",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                stderr=asyncio.subprocess.DEVNULL,
             )
         except FileNotFoundError as e:
             raise MasscanNotFound from e
@@ -62,7 +62,7 @@ class Scanner:
                     line = e.partial
 
                 line = line.decode()
-                print(line)
+
                 if "permission denied" in line:
                     raise LackingRequiredPermissions
 

@@ -12,7 +12,8 @@ async def main():
     async for host in scanner.scan():
         await investigator.add_host(Host("127.0.0.1", 22, 69))
 
-    await asyncio.sleep(10000000)
+        async for ollama in investigator.iter():
+            print(ollama)
 
 
 asyncio.run(main())

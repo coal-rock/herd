@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
+from multiprocessing import connection
 import aiohttp
 from scraper.scanner import Host
 import json
@@ -38,97 +39,56 @@ class OllamaHost:
 
 
 class Investigator:
-    input_queue: asyncio.Queue[Host]
-    output_queue: asyncio.Queue[OllamaHost]
+    connector: aiohttp.TCPConnector
+    parallel_requests: int
+    hosts: list[Host]
 
-    task_group: asyncio.TaskGroup | None
-    client: aiohttp.ClientSession | None
-    worker_task: asyncio.Task[None] | None
+    def __init__(self, hosts: list[Host], parallel_requests: int) -> None:
+        self.connector = aiohttp.TCPConnector(limit=0)
+        self.parallel_requests = parallel_requests
+        self.hosts = hosts
+        pass
 
-    running: bool
+    async def start(self):
+        semaphore = asyncio.Semaphore(self.parallel_requests)
+        session = aiohttp.ClientSession(connector=self.connector)
+        ollama_hosts: list[OllamaHost] = []
 
-    def __init__(self) -> None:
-        self.task_group = None
+        async def get(host: Host):
+            async with semaphore:
+                models: list[OllamaModel] = []
+                version: str
 
-        self.input_queue = asyncio.Queue()
-        self.output_queue = asyncio.Queue()
-        self.running = False
+                try:
+                    async with session.get(
+                        f"http://{host.ip}:{host.port}/api/tags", ssl=False
+                    ) as response:
+                        response = await response.json()  # pyright:ignore[reportAny]
 
-        self.client = None
-        self.worker_task = None
+                        for model in response["models"]:  # pyright:ignore[reportAny]
+                            model = from_dict(
+                                data_class=OllamaModel,
+                                data=json.loads(model),  # pyright:ignore[reportAny]
+                            )
 
-    def start(self):
-        """
-        Creates an aiohttp instance and instantiates worker task
-        """
-        self.running = True
-        self.client = aiohttp.ClientSession()
-        self.task_group = asyncio.TaskGroup()
-        self.worker_task = asyncio.create_task(self.worker())
+                            models.append(model)
 
-    async def stop(self):
-        self.running = False
+                    async with session.get(
+                        f"http://{host.ip}:{host.port}/api/version", ssl=False
+                    ) as response:
+                        response = await response.json()  # pyright:ignore[reportAny]
+                        version = response["version"]  # pyright:ignore[reportAny]
 
-        if self.worker_task is not None:
-            await self.worker_task
+                    ollama_hosts.append(
+                        OllamaHost(
+                            ip=host.ip,
+                            port=host.port,
+                            models=models,
+                            version=version,
+                            last_seen=time.time(),
+                        )
+                    )
+                except Exception as _:
+                    pass
 
-        if self.task_group is not None:
-            await self.task_group.__aexit__(None, None, None)
-
-        if self.client is not None:
-            await self.client.close()
-
-    async def iter(self) -> AsyncIterator[OllamaHost]:
-        while not self.output_queue.empty():
-            yield await self.output_queue.get()
-
-    async def add_host(self, host: Host):
-        await self.input_queue.put(host)
-
-    async def fetch(self, host: Host):
-        if self.client is None:
-            return
-
-        try:
-            res = await self.client.get(f"http://{host.ip}:{host.port}/api/tags")
-            res = await res.json()  # pyright:ignore[reportAny]
-            models: list[OllamaModel] = []
-
-            for model in res["models"]:  # pyright:ignore[reportAny]
-                model = from_dict(
-                    data_class=OllamaModel,
-                    data=json.loads(model),  # pyright:ignore[reportAny]
-                )
-
-                models.append(model)
-
-            res = await self.client.get(f"http://{host.ip}:{host.port}/api/version")
-            res = await res.json()  # pyright:ignore[reportAny]
-            version = res["version"]  # pyright:ignore[reportAny]
-
-            await self.output_queue.put(
-                OllamaHost(
-                    ip=host.ip,
-                    port=host.port,
-                    models=models,
-                    version=version,  # pyright:ignore[reportAny]
-                    last_seen=time.time(),
-                )
-            )
-
-        except Exception as e:
-            pass
-            # print(f"INVESTIGATION ERROR: {host} | {e}")
-
-    async def worker(self):
-        if self.task_group is None:
-            return
-
-        _ = await self.task_group.__aenter__()
-
-        while self.running:
-            try:
-                host = await asyncio.wait_for(self.input_queue.get(), timeout=1.0)
-                _ = self.task_group.create_task(self.fetch(host))
-            except asyncio.TimeoutError:
-                continue
+        _ = await asyncio.gather(*(get(host) for host in self.hosts))

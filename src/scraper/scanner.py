@@ -25,15 +25,23 @@ class Scanner:
     range: str
     port: int
     max_rate: int
+    limit: int
 
     def __init__(
-        self, range: str = "0.0.0.0/0", port: int = 11434, max_rate: int = 10000
+        self,
+        range: str = "0.0.0.0/0",
+        port: int = 11434,
+        max_rate: int = 10000,
+        limit: int = 0,
     ):
         self.range = range
         self.port = port
         self.max_rate = max_rate
+        self.limit = limit
 
     async def scan(self) -> AsyncIterator[Host]:
+        count = 0
+
         try:
             process = await asyncio.create_subprocess_exec(
                 "masscan",
@@ -46,58 +54,48 @@ class Scanner:
                 "-oL",
                 "-",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as e:
             raise MasscanNotFound from e
 
         while True:
-            if process.stdout is not None:
-                if process.stdout.at_eof():
-                    break
+            if count >= self.limit:
+                return
 
-                try:
-                    line = await process.stdout.readuntil(separator=(b"\r", b"\n"))
-                except asyncio.IncompleteReadError as e:
-                    line = e.partial
+            if process.stdout is None or process.stderr is None:
+                return
 
-                line = line.decode()
+            if process.stdout.at_eof():
+                while not process.stderr.at_eof():
+                    line = await process.stderr.readline()
+                    line = line.decode()
 
-                if "permission denied" in line:
-                    raise LackingRequiredPermissions
+                    if "FAIL: permission denied" in line:
+                        raise LackingRequiredPermissions
 
-                if "FAIL:" in line:
-                    raise MasscanGeneric(line.split("FAIL: ")[1])
+                    # handle generic error
+                    if "FAIL:" in line:
+                        raise MasscanGeneric(line.split("FAIL: ")[1])
 
-                if line.strip().startswith("open"):
-                    line_parts = line.strip().split(" ")
+                return
 
-                    port = int(line_parts[2])
-                    ip = line_parts[3]
+            try:
+                line = await process.stdout.readuntil(separator=(b"\r", b"\n"))
+            except asyncio.IncompleteReadError as e:
+                line = e.partial
 
-                    try:
-                        timestamp = int(line_parts[4])
-                    except ValueError:
-                        first = line_parts[4].split("rate")[0]
+            line = line.decode()
 
-                        new_line = await process.stdout.readuntil(
-                            separator=(b"\r", b"\n")
-                        )
+            if line.strip().startswith("open"):
+                line_parts = line.strip().split(" ")
 
-                        while "rate" in new_line.decode():
-                            try:
-                                new_line = await process.stdout.readuntil(
-                                    separator=(b"\r", b"\n")
-                                )
-                            except asyncio.IncompleteReadError as e:
-                                new_line = e.partial
+                port = int(line_parts[2])
+                ip = line_parts[3]
+                timestamp = int(line_parts[4])
 
-                        timestamp = int(first + new_line.decode())
-
-                    yield Host(ip, port, timestamp)
-
-            else:
-                break
+                count += 1
+                yield Host(ip, port, timestamp)
 
 
 class MasscanNotFound(Exception):

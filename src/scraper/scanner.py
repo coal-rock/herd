@@ -36,7 +36,7 @@ class Scanner:
     async def scan(self) -> AsyncIterator[Host]:
         try:
             process = await asyncio.create_subprocess_exec(
-                "masscan",
+                "bin/masscan",
                 f"-p{self.port}",
                 self.range,
                 "--max-rate",

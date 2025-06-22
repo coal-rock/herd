@@ -10,7 +10,7 @@ async def main():
     investigator.start()
 
     async for host in scanner.scan():
-        await investigator.add_host(Host("127.0.0.1", 22, 69))
+        await investigator.add_host(host)
 
         async for ollama in investigator.iter():
             print(ollama)
